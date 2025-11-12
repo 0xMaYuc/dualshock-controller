@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Controller Pairing</title>
+
+  <!-- Allow HID access in this top-level window -->
+  <meta http-equiv="Permissions-Policy" content="hid=(self)">
+
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .container {
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 20px;
+      padding: 40px;
+      max-width: 500px;
+      width: 100%;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0 0 20px 0;
+      font-size: 28px;
+      font-weight: 600;
+    }
+
+    p {
+      margin: 0 0 30px 0;
+      font-size: 16px;
+      line-height: 1.6;
+      opacity: 0.95;
+    }
+
+    button {
+      background: white;
+      color: #667eea;
+      border: none;
+      padding: 15px 40px;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .status {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.2);
+      font-size: 14px;
+    }
+
+    .error {
+      background: rgba(255, 0, 0, 0.3);
+    }
+
+    .success {
+      background: rgba(0, 255, 0, 0.3);
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255, 255, 255, 0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-left: 10px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎮 Controller Pairing</h1>
+    <p>Click the button below to connect your DualShock 4, DualSense, or DualSense Edge controller.</p>
+    <button id="pairBtn" onclick="startPairing()">Connect Controller</button>
+    <div id="status" style="display: none;"></div>
+  </div>
+
+  <script type="module">
+    // Import ControllerFactory to get supported models
+    import { ControllerFactory } from './app.js';
+
+    window.startPairing = async function() {
+      const btn = document.getElementById('pairBtn');
+      const status = document.getElementById('status');
+
+      btn.disabled = true;
+      status.style.display = 'block';
+      status.className = 'status';
+      status.innerHTML = 'Opening device selector...<span class="spinner"></span>';
+
+      try {
+        // Check if WebHID is supported
+        if (!navigator.hid) {
+          throw new Error('WebHID is not supported in this browser. Please use Chrome, Edge, or another Chromium-based browser.');
+        }
+
+        // Get supported controller models
+        const supportedModels = ControllerFactory.getSupportedModels();
+        const requestParams = { filters: supportedModels };
+
+        // Check for already connected devices first
+        let devices = await navigator.hid.getDevices();
+
+        if (devices.length === 0) {
+          // Request device selection from user
+          devices = await navigator.hid.requestDevice(requestParams);
+        }
+
+        if (devices.length === 0) {
+          throw new Error('No controller was selected. Please try again.');
+        }
+
+        if (devices.length > 1) {
+          throw new Error('Multiple controllers detected. Please connect only one controller at a time.');
+        }
+
+        const device = devices[0];
+
+        // Success! Send device info back to parent
+        status.className = 'status success';
+        status.textContent = '✓ Controller paired successfully! This window will close automatically...';
+
+        // Prepare device info to send (only serializable data)
+        const deviceInfo = {
+          productId: device.productId,
+          vendorId: device.vendorId,
+          productName: device.productName,
+          collections: device.collections
+        };
+
+        // Send message to parent window
+        if (window.opener) {
+          window.opener.postMessage({
+            type: 'HID_DEVICE_PAIRED',
+            device: deviceInfo
+          }, window.location.origin);
+
+          // Close popup after a short delay
+          setTimeout(() => {
+            window.close();
+          }, 1500);
+        } else {
+          throw new Error('No parent window found. Please ensure this page was opened as a popup.');
+        }
+
+      } catch (error) {
+        console.error('Pairing error:', error);
+        status.className = 'status error';
+        status.textContent = '❌ Error: ' + error.message;
+        btn.disabled = false;
+      }
+    };
+
+    // Auto-start pairing when opened (optional)
+    window.addEventListener('load', () => {
+      // Uncomment the line below to auto-start pairing
+      // startPairing();
+    });
+  </script>
+</body>
+</html>
