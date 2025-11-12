@@ -6919,6 +6919,104 @@ function gboot() {
   navigator.hid.addEventListener("disconnect", handleDisconnectedDevice);
 }
 
+// ===== HID Pairing Flow for iFrames =====
+
+/**
+ * Check if the app is running inside an iframe
+ */
+function isInIframe() {
+  try {
+    return window.self !== window.top;
+  } catch (e) {
+    // If we get a security error, we're definitely in an iframe
+    return true;
+  }
+}
+
+/**
+ * Check if HID API is accessible (not blocked by permissions policy)
+ */
+async function isHIDAccessible() {
+  try {
+    if (!navigator.hid) return false;
+    // Try to access getDevices - if this throws, HID is blocked
+    await navigator.hid.getDevices();
+    return true;
+  } catch (error) {
+    if (error.name === 'SecurityError') {
+      return false;
+    }
+    // Other errors don't mean HID is inaccessible
+    return true;
+  }
+}
+
+/**
+ * Open popup for HID pairing and wait for result
+ * Returns the device info from the popup
+ */
+function openPairingPopup() {
+  return new Promise((resolve, reject) => {
+    // Calculate popup position (centered on screen)
+    const width = 600;
+    const height = 500;
+    const left = (screen.width - width) / 2;
+    const top = (screen.height - height) / 2;
+
+    // Open popup
+    const popup = window.open(
+      './pairing.html',
+      'HID Pairing',
+      `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+    );
+
+    if (!popup) {
+      reject(new Error('Failed to open pairing popup. Please allow popups for this site.'));
+      return;
+    }
+
+    // Set up message listener
+    const messageHandler = (event) => {
+      // Verify origin for security
+      if (event.origin !== window.location.origin) {
+        return;
+      }
+
+      if (event.data && event.data.type === 'HID_DEVICE_PAIRED') {
+        // Clean up
+        window.removeEventListener('message', messageHandler);
+        clearTimeout(timeout);
+
+        // Resolve with device info
+        resolve(event.data.device);
+      }
+    };
+
+    window.addEventListener('message', messageHandler);
+
+    // Set up timeout (60 seconds)
+    const timeout = setTimeout(() => {
+      window.removeEventListener('message', messageHandler);
+      if (!popup.closed) {
+        popup.close();
+      }
+      reject(new Error('Pairing timeout. Please try again.'));
+    }, 60000);
+
+    // Check if popup was closed by user
+    const checkClosed = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(checkClosed);
+        clearTimeout(timeout);
+        window.removeEventListener('message', messageHandler);
+        reject(new Error('Pairing cancelled by user.'));
+      }
+    }, 500);
+  });
+}
+
+// ===== End HID Pairing Flow =====
+
 async function connect() {
   app.gj = crypto.randomUUID();
   initAnalyticsApi(app); // init with gu and jg
@@ -6939,10 +7037,50 @@ async function connect() {
 
     const supportedModels = ControllerFactory.getSupportedModels();
     const requestParams = { filters: supportedModels };
-    let devices = await navigator.hid.getDevices(); // Already connected?
-    if (devices.length == 0) {
-      devices = await navigator.hid.requestDevice(requestParams);
+    let devices = [];
+    let device = null;
+
+    // Check if we're in an iframe and HID is blocked
+    const hidAccessible = await isHIDAccessible();
+
+    if (!hidAccessible && isInIframe()) {
+      // HID is blocked in iframe - use popup pairing flow
+      console.log('HID access blocked in iframe. Opening pairing popup...');
+
+      try {
+        const deviceInfo = await openPairingPopup();
+        console.log('Device paired via popup:', deviceInfo);
+
+        // Now try to access the device via getDevices (it should be available now)
+        devices = await navigator.hid.getDevices();
+
+        // Find the device that matches the paired device info
+        device = devices.find(d =>
+          d.productId === deviceInfo.productId &&
+          d.vendorId === deviceInfo.vendorId
+        );
+
+        if (!device) {
+          throw new Error('Paired device not found. Please try again.');
+        }
+
+        devices = [device];
+      } catch (popupError) {
+        console.error('Popup pairing failed:', popupError);
+        infoAlert(popupError.message || 'Failed to pair controller via popup.');
+        $("#btnconnect").prop("disabled", false);
+        $("#connectspinner").hide();
+        await disconnect();
+        return;
+      }
+    } else {
+      // Normal flow - HID is accessible
+      devices = await navigator.hid.getDevices(); // Already connected?
+      if (devices.length == 0) {
+        devices = await navigator.hid.requestDevice(requestParams);
+      }
     }
+
     if (devices.length == 0) {
       $("#btnconnect").prop("disabled", false);
       $("#connectspinner").hide();
