@@ -111,9 +111,15 @@
     <div id="status" style="display: none;"></div>
   </div>
 
-  <script type="module">
-    // Import ControllerFactory to get supported models
-    import { ControllerFactory } from './app.js';
+  <script>
+    // Supported controller models (DualShock 4 v1/v2, DualSense, DualSense Edge)
+    function getSupportedModels() {
+      const ds4v1 = { vendorId: 0x054c, productId: 0x05c4 };
+      const ds4v2 = { vendorId: 0x054c, productId: 0x09cc };
+      const ds5 = { vendorId: 0x054c, productId: 0x0ce6 };
+      const ds5edge = { vendorId: 0x054c, productId: 0x0df2 };
+      return [ds4v1, ds4v2, ds5, ds5edge];
+    }
 
     window.startPairing = async function() {
       const btn = document.getElementById('pairBtn');
@@ -131,7 +137,7 @@
         }
 
         // Get supported controller models
-        const supportedModels = ControllerFactory.getSupportedModels();
+        const supportedModels = getSupportedModels();
         const requestParams = { filters: supportedModels };
 
         // Check for already connected devices first
