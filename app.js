@@ -7096,7 +7096,7 @@ async function connect() {
       return;
     }
 
-    const [device] = devices;
+    device = devices[0];
     if(device.opened) {
       console.log("Device already opened, closing it before re-opening.");
       await device.close();
